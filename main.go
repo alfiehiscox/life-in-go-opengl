@@ -3,18 +3,22 @@ package main
 import (
 	"fmt"
 	"log"
+	"math/rand"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
 	"github.com/go-gl/glfw/v3.2/glfw"
 )
 
 const (
-	width   = 500
-	height  = 500
-	rows    = 10
-	columns = 10
+	width     = 500
+	height    = 500
+	rows      = 100
+	columns   = 100
+	threshold = 0.15
+	fps       = 10
 
 	vertexShaderSource = `
 		#version 410
@@ -46,8 +50,10 @@ var (
 )
 
 type cell struct {
-	drawable uint32
-	x, y     int
+	drawable  uint32
+	x, y      int
+	alive     bool
+	aliveNext bool
 }
 
 func main() {
@@ -60,7 +66,17 @@ func main() {
 	cells := makeCells()
 
 	for !window.ShouldClose() {
+		t := time.Now()
+
+		for x := range cells {
+			for _, c := range cells[x] {
+				c.checkState(cells)
+			}
+		}
+
 		draw(cells, window, program)
+
+		time.Sleep(time.Second/time.Duration(fps) - time.Since(t))
 	}
 
 }
@@ -96,10 +112,16 @@ func draw(cells [][]*cell, window *glfw.Window, program uint32) {
 }
 
 func makeCells() [][]*cell {
+	rand.Seed(time.Now().UnixNano())
+
 	cells := make([][]*cell, rows)
 	for x := 0; x < rows; x++ {
 		for y := 0; y < columns; y++ {
 			c := newCell(x, y)
+
+			c.alive = rand.Float64() < threshold
+			c.aliveNext = c.alive
+
 			cells[x] = append(cells[x], c)
 		}
 	}
@@ -139,8 +161,68 @@ func newCell(x, y int) *cell {
 }
 
 func (c *cell) draw() {
+	if !c.alive {
+		return
+	}
+
 	gl.BindVertexArray(c.drawable)
 	gl.DrawArrays(gl.TRIANGLES, 0, int32(len(square)/3))
+}
+
+func (c *cell) checkState(cells [][]*cell) {
+	c.alive = c.aliveNext
+	c.aliveNext = c.alive
+
+	liveCount := c.aliveNeightbours(cells)
+	if c.alive {
+		if liveCount < 2 {
+			c.aliveNext = false
+		}
+
+		if liveCount == 2 || liveCount == 3 {
+			c.aliveNext = true
+		}
+
+		if liveCount > 3 {
+			c.aliveNext = false
+		}
+	} else {
+		if liveCount == 3 {
+			c.aliveNext = true
+		}
+	}
+
+}
+
+func (c *cell) aliveNeightbours(cells [][]*cell) int {
+	var liveCount int
+	add := func(x, y int) {
+		if x == len(cells) {
+			x = 0
+		} else if x == -1 {
+			x = len(cells) - 1
+		}
+		if y == len(cells[x]) {
+			y = 0
+		} else if y == -1 {
+			y = len(cells[x]) - 1
+		}
+
+		if cells[x][y].alive {
+			liveCount++
+		}
+	}
+
+	add(c.x-1, c.y)
+	add(c.x+1, c.y)
+	add(c.x, c.y+1)
+	add(c.x, c.y-1)
+	add(c.x+1, c.y+1)
+	add(c.x+1, c.y-1)
+	add(c.x-1, c.y+1)
+	add(c.x-1, c.y-1)
+
+	return liveCount
 }
 
 func compileShader(source string, shaderType uint32) (uint32, error) {
